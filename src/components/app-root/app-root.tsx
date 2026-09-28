@@ -213,6 +213,42 @@ export class AppRoot {
     }), '已新增学习步骤。');
   }
 
+  private duplicateModule(): void {
+    if (this.project.status === 'frozen') {
+      this.showToast('warning', '当前版本已冻结，无法复制模块，请先创建修订版。');
+      return;
+    }
+    const source = this.currentModule;
+    if (!source) return;
+    const stamp = Date.now().toString(36);
+    const idMap = new Map<string, string>();
+    source.steps.forEach((step, index) => idMap.set(step.id, `step-${stamp}-${index + 1}`));
+    const duplicateSteps: LessonStep[] = source.steps.map((step) => ({
+      ...structuredClone(step),
+      id: idMap.get(step.id)!,
+      prerequisiteId: idMap.has(step.prerequisiteId) ? idMap.get(step.prerequisiteId)! : '',
+    }));
+    const duplicate: CourseModule = {
+      id: `module-${stamp}`,
+      title: `${source.title}（副本）`,
+      summary: source.summary,
+      color: source.color,
+      steps: duplicateSteps,
+    };
+    const clearedCount = source.steps.filter((step) => step.prerequisiteId && !idMap.has(step.prerequisiteId)).length;
+    this.commit((draft) => {
+      const index = draft.modules.findIndex((item) => item.id === source.id);
+      const modules = [...draft.modules];
+      modules.splice(index + 1, 0, duplicate);
+      return {
+        ...draft,
+        modules,
+        selectedModuleId: duplicate.id,
+        selectedStepId: duplicateSteps[0]?.id ?? '',
+      };
+    }, `已复制模块「${duplicate.title}」：模块目标、主题色与 ${duplicateSteps.length} 个步骤已带入副本，前置条件已按新步骤重新对应${clearedCount ? `，${clearedCount} 个跨模块或失效前置已留空` : ''}。`);
+  }
+
   private duplicateStep(): void {
     const step = this.currentStep;
     if (!step) return;
@@ -602,6 +638,14 @@ export class AppRoot {
                 <div class="module-editor">
                   <ion-input disabled={this.project.status === 'frozen'} label="当前模块标题" labelPlacement="stacked" class="studio-input" value={module?.title ?? ''} onIonInput={(event) => this.updateCurrentModule({ title: event.detail.value ?? '' })} />
                   <ion-textarea disabled={this.project.status === 'frozen'} autoGrow label="模块目标" labelPlacement="stacked" class="studio-input" value={module?.summary ?? ''} onIonInput={(event) => this.updateCurrentModule({ summary: event.detail.value ?? '' })} />
+                  <div class="module-duplicate">
+                    <ion-button expand="block" fill="outline" class="studio-button duplicate-module-button" disabled={this.project.status === 'frozen'} onClick={() => this.duplicateModule()}>复制整块模块</ion-button>
+                    <p class={`module-duplicate-hint ${this.project.status === 'frozen' ? 'frozen' : ''}`}>
+                      {this.project.status === 'frozen'
+                        ? '当前版本已冻结，不能复制模块；请先在顶部「创建修订版」。'
+                        : `副本将复制模块目标、主题色和全部 ${module?.steps.length ?? 0} 个步骤，插在当前模块后面并自动选中；前置条件按新步骤重新对应，跨模块或失效的前置会留空。`}
+                    </p>
+                  </div>
                 </div>
               </aside>
 
