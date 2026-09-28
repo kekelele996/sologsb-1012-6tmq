@@ -182,6 +182,62 @@ export class AppRoot {
     this.commit((draft) => ({ ...draft, modules: [...draft.modules, module], selectedModuleId: module.id, selectedStepId: '' }), '已创建课程模块。');
   }
 
+  private duplicateModule(): void {
+    const source = this.currentModule;
+    if (!source) return;
+    if (this.project.status === 'frozen') {
+      this.showToast('warning', '课程已冻结，无法复制模块，请先创建修订版。');
+      return;
+    }
+
+    const stamp = Date.now().toString(36);
+    const newModuleId = `module-${stamp}`;
+    // 旧步骤 id → 副本中的新步骤 id，按相同顺序逐个分配
+    const idMap = new Map<string, string>(
+      source.steps.map((step, index) => [step.id, `step-${stamp}-${index + 1}`]),
+    );
+
+    let droppedPrerequisites = 0;
+    const copiedSteps: LessonStep[] = source.steps.map((step) => {
+      // 前置仍指向本模块内的步骤时，重指向副本里对应的新步骤；
+      // 跨模块或指向已不存在步骤的前置项留空
+      const remapped = step.prerequisiteId ? idMap.get(step.prerequisiteId) ?? '' : '';
+      if (step.prerequisiteId && !remapped) droppedPrerequisites += 1;
+      return {
+        ...structuredClone(step),
+        id: idMap.get(step.id)!,
+        prerequisiteId: remapped,
+      };
+    });
+
+    const duplicate: CourseModule = {
+      id: newModuleId,
+      title: `${source.title}（副本）`,
+      summary: source.summary,
+      color: source.color,
+      steps: copiedSteps,
+    };
+
+    const message = copiedSteps.length
+      ? `已复制「${duplicate.title}」，含 ${copiedSteps.length} 个步骤，已置于原模块之后。`
+        + (droppedPrerequisites
+          ? ` ${droppedPrerequisites} 个跨模块或失效的前置条件已留空。`
+          : '前置条件已按副本中的新步骤重新对应。')
+      : `已复制「${duplicate.title}」，该模块暂无步骤，已置于原模块之后。`;
+
+    this.commit((draft) => {
+      const sourceIndex = draft.modules.findIndex((item) => item.id === source.id);
+      const modules = [...draft.modules];
+      modules.splice(sourceIndex + 1, 0, duplicate);
+      return {
+        ...draft,
+        modules,
+        selectedModuleId: newModuleId,
+        selectedStepId: copiedSteps[0]?.id ?? '',
+      };
+    }, message);
+  }
+
   private addStep(kind: LessonStep['kind'] = '示范'): void {
     const module = this.currentModule;
     if (!module) return this.addModule();
@@ -543,6 +599,7 @@ export class AppRoot {
   render() {
     const module = this.currentModule;
     const errors = this.checks.filter((check) => check.severity === 'error').length;
+    const frozen = this.project.status === 'frozen';
     return (
       <Host>
         <ion-app>
@@ -600,8 +657,16 @@ export class AppRoot {
                   ))}
                 </div>
                 <div class="module-editor">
-                  <ion-input disabled={this.project.status === 'frozen'} label="当前模块标题" labelPlacement="stacked" class="studio-input" value={module?.title ?? ''} onIonInput={(event) => this.updateCurrentModule({ title: event.detail.value ?? '' })} />
-                  <ion-textarea disabled={this.project.status === 'frozen'} autoGrow label="模块目标" labelPlacement="stacked" class="studio-input" value={module?.summary ?? ''} onIonInput={(event) => this.updateCurrentModule({ summary: event.detail.value ?? '' })} />
+                  <ion-input disabled={frozen} label="当前模块标题" labelPlacement="stacked" class="studio-input" value={module?.title ?? ''} onIonInput={(event) => this.updateCurrentModule({ title: event.detail.value ?? '' })} />
+                  <ion-textarea disabled={frozen} autoGrow label="模块目标" labelPlacement="stacked" class="studio-input" value={module?.summary ?? ''} onIonInput={(event) => this.updateCurrentModule({ summary: event.detail.value ?? '' })} />
+                  <div class="module-duplicate">
+                    <ion-button expand="block" fill="outline" color="primary" class="studio-button" disabled={frozen || !module} onClick={() => this.duplicateModule()}>
+                      {frozen ? '冻结课程不能复制模块' : '复制整个模块（目标 · 主题色 · 全部步骤）'}
+                    </ion-button>
+                    <small>{frozen
+                      ? '当前版本已冻结，请先在右上角创建修订版，再复制模块。'
+                      : '副本会插入到当前模块之后并自动选中，前置条件按新步骤对应，跨模块或失效项留空。'}</small>
+                  </div>
                 </div>
               </aside>
 
